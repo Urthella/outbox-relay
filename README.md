@@ -20,9 +20,10 @@ flowchart LR
 The server needs `wal_level=logical`, and the relay's role needs `REPLICATION`.
 
 ```bash
-go install github.com/Urthella/outbox-relay@latest
+git clone https://github.com/Urthella/outbox-relay && cd outbox-relay
+export DATABASE_URL=postgres://relay:secret@localhost:5432/app
 psql "$DATABASE_URL" -f schema.sql
-DATABASE_URL=postgres://relay:secret@localhost:5432/app outbox-relay
+go run .
 ```
 
 In your application, insert into `outbox` in the same transaction as the change:
@@ -36,7 +37,8 @@ COMMIT;
 ```
 
 That event reaches the `OUTBOX` stream on the subject `outbox.orders.paid`, with the headers
-`Outbox-Id`, `Outbox-Key` and `Outbox-Topic`. `outbox-relay -help` lists the options.
+`Outbox-Id`, `Outbox-Key` and `Outbox-Topic`. `go run . -help` lists the options, and `NATS_URL` sets the
+server if it isn't on localhost.
 
 ## What it guarantees
 
