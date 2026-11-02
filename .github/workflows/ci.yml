@@ -1,0 +1,31 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: test (postgres ${{ matrix.postgres }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres: ["14", "18"]
+    env:
+      TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      # A service container can't take server flags, and these tests need wal_level=logical.
+      - name: Start Postgres
+        run: |
+          docker run -d --name pg -e POSTGRES_PASSWORD=postgres -p 5432:5432 postgres:${{ matrix.postgres }} \
+            -c wal_level=logical -c max_wal_senders=20 -c max_replication_slots=20
+          until docker exec pg pg_isready -U postgres; do sleep 1; done
+      - run: test -z "$(gofmt -l .)"
+      - run: go vet ./...
+      - run: go test -race -count=1 ./...
