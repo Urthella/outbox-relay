@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -31,15 +32,16 @@ func main() {
 		stream      = flag.String("stream", "OUTBOX", "JetStream stream, created if missing")
 		prefix      = flag.String("prefix", "outbox", "subject prefix: events go to <prefix>.<topic>")
 		window      = flag.Duration("dedup-window", 10*time.Minute, "how long the stream remembers message IDs")
+		metricsAddr = flag.String("metrics-addr", "", "serve Prometheus metrics here, like :9090 (off by default)")
 	)
 	flag.Parse()
-	if err := run(*database, *natsURL, *slot, *publication, *stream, *prefix, *window); err != nil && !errors.Is(err, context.Canceled) {
+	if err := run(*database, *natsURL, *slot, *publication, *stream, *prefix, *metricsAddr, *window); err != nil && !errors.Is(err, context.Canceled) {
 		fmt.Fprintln(os.Stderr, "outbox-relay:", err)
 		os.Exit(1)
 	}
 }
 
-func run(database, natsURL, slot, publication, stream, prefix string, window time.Duration) error {
+func run(database, natsURL, slot, publication, stream, prefix, metricsAddr string, window time.Duration) error {
 	if database == "" {
 		return errors.New("set -database or DATABASE_URL")
 	}
@@ -55,6 +57,20 @@ func run(database, natsURL, slot, publication, stream, prefix string, window tim
 	if err != nil {
 		return err
 	}
-	relay := &Relay{ConnString: database, Slot: slot, Publication: publication, Publisher: publisher, Log: slog.Default()}
+	var out Publisher = publisher
+	if metricsAddr != "" {
+		metrics := &Metrics{ConnString: database, Slot: slot, Publisher: publisher}
+		out = metrics
+		mux := http.NewServeMux()
+		mux.Handle("GET /metrics", metrics)
+		srv := &http.Server{Addr: metricsAddr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+		go func() {
+			if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				slog.Error("metrics server stopped", "err", err)
+			}
+		}()
+		defer func() { _ = srv.Close() }()
+	}
+	relay := &Relay{ConnString: database, Slot: slot, Publication: publication, Publisher: out, Log: slog.Default()}
 	return relay.Run(ctx)
 }

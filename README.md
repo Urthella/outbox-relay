@@ -70,11 +70,26 @@ server if it isn't on localhost.
 - **Invalid topics.** A topic that can't be part of a NATS subject goes to `outbox._invalid` so it can't
   block the rest. The check constraint in `schema.sql` stops these at insert.
 
+## Metrics
+
+Start it with `-metrics-addr :9090` to serve Prometheus metrics at `/metrics`:
+
+| Metric | What it tells you |
+| --- | --- |
+| `outbox_relay_slot_retained_wal_bytes` | WAL written since the slot's confirmed position. This is the one to alert on |
+| `outbox_relay_slot_active` | Whether a relay is connected to the slot |
+| `outbox_relay_published_total` | Events the broker has stored since this process started |
+| `outbox_relay_database_up` | Whether the last query for the slot's state worked |
+
+The metrics come from the relay itself, so they stop when it does. Alert on the scrape failing too, or
+watch `pg_replication_slots` from your Postgres monitoring.
+
 ## Tests
 
 The tests use a real Postgres and an embedded NATS server. They cover rollbacks, uncommitted rows,
 catching up after a restart, a crash between the broker's ack and confirming the slot, a refused
-publish not moving the slot, activity on other tables, invalid topics and a standby taking over.
+publish not moving the slot, activity on other tables, invalid topics, a standby taking over and
+metrics showing WAL piling up while the relay is down.
 
 ```bash
 nix develop

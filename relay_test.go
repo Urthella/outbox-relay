@@ -480,3 +480,19 @@ func TestDecodeRefusesATableWithoutTheColumns(t *testing.T) {
 		t.Fatal("a table without topic, key and payload should be refused")
 	}
 }
+
+func TestAnOversizedEventHoldsUpTheStreamRatherThanBeingSkipped(t *testing.T) {
+	w := newWorld(t)
+	w.start(w.pub)
+	w.waitForSlot()
+	ctx := context.Background()
+	huge := `{"a": "` + strings.Repeat("x", 2<<20) + `"}` // over NATS's default 1 MB limit
+	if _, err := w.db.Exec(ctx, "INSERT INTO outbox (topic, key, payload) VALUES ('t', 'huge', $1)", huge); err != nil {
+		t.Fatal(err)
+	}
+	w.insert("t", "after", 1)
+	time.Sleep(time.Second)
+	if got := w.messages(); len(got) != 0 {
+		t.Fatalf("events got past one that can't be delivered: %+v", got)
+	}
+}
