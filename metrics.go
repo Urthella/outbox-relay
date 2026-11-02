@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -55,31 +56,28 @@ func (m *Metrics) slot(ctx context.Context) (slotState, error) {
 	return s, err
 }
 
+func writeMetric(b *strings.Builder, kind, name, help string, value int64) {
+	fmt.Fprintf(b, "# HELP %s %s\n# TYPE %s %s\n%s %d\n", name, help, name, kind, name, value)
+}
+
 func (m *Metrics) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
-	fmt.Fprintln(w, "# HELP outbox_relay_published_total Events the broker has stored, since this process started.")
-	fmt.Fprintln(w, "# TYPE outbox_relay_published_total counter")
-	fmt.Fprintf(w, "outbox_relay_published_total %d\n", m.published.Load())
+	var b strings.Builder
+	writeMetric(&b, "counter", "outbox_relay_published_total", "Events the broker has stored, since this process started.", int64(m.published.Load()))
 
 	s, err := m.slot(r.Context())
-	up := 1
+	up := int64(1)
 	if err != nil {
 		up = 0
 	}
-	fmt.Fprintln(w, "# HELP outbox_relay_database_up Whether the last query for the slot's state worked.")
-	fmt.Fprintln(w, "# TYPE outbox_relay_database_up gauge")
-	fmt.Fprintf(w, "outbox_relay_database_up %d\n", up)
-	if err != nil || !s.exists {
-		return
+	writeMetric(&b, "gauge", "outbox_relay_database_up", "Whether the last query for the slot's state worked.", up)
+	if err == nil && s.exists {
+		active := int64(0)
+		if s.active {
+			active = 1
+		}
+		writeMetric(&b, "gauge", "outbox_relay_slot_active", "Whether a relay is connected to the slot.", active)
+		writeMetric(&b, "gauge", "outbox_relay_slot_retained_wal_bytes", "WAL written since the slot's confirmed position.", s.retained)
 	}
-	active := 0
-	if s.active {
-		active = 1
-	}
-	fmt.Fprintln(w, "# HELP outbox_relay_slot_active Whether a relay is connected to the slot.")
-	fmt.Fprintln(w, "# TYPE outbox_relay_slot_active gauge")
-	fmt.Fprintf(w, "outbox_relay_slot_active %d\n", active)
-	fmt.Fprintln(w, "# HELP outbox_relay_slot_retained_wal_bytes WAL written since the slot's confirmed position.")
-	fmt.Fprintln(w, "# TYPE outbox_relay_slot_retained_wal_bytes gauge")
-	fmt.Fprintf(w, "outbox_relay_slot_retained_wal_bytes %d\n", s.retained)
+	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
+	_, _ = w.Write([]byte(b.String())) // nothing useful to do if the scraper has gone
 }
